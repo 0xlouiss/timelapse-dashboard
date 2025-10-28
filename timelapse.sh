@@ -12,7 +12,7 @@ if [ -z "$BASE_DIR" ]; then
     if [ -d "/mnt/share" ] && [ -w "/mnt/share" ]; then
         BASE_DIR="/mnt/share"
     else
-        BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        BASE_DIR="$(dirname "$(realpath "$0")")"
     fi
 fi
 

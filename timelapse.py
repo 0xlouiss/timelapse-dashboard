@@ -73,7 +73,7 @@ def start_timelapse():
         return jsonify({"success": True, "message": "Timelapse started"})
     except Exception as e:
         app.logger.error(f"Error starting timelapse: {e}")
-        return jsonify({"success": False, "message": str(e)}), 500
+        return jsonify({"success": False, "message": "Failed to start timelapse"}), 500
 
 @app.route("/stop", methods=["POST"])
 def stop_timelapse():
@@ -87,7 +87,7 @@ def stop_timelapse():
         return jsonify({"success": False, "message": "No timelapse running"}), 400
     except Exception as e:
         app.logger.error(f"Error stopping timelapse: {e}")
-        return jsonify({"success": False, "message": str(e)}), 500
+        return jsonify({"success": False, "message": "Failed to stop timelapse"}), 500
 
 @app.route("/status")
 def status():
@@ -108,7 +108,7 @@ def logs():
         return jsonify({"logs": lines[-50:]})  # last 50 lines
     except Exception as e:
         app.logger.error(f"Error reading logs: {e}")
-        return jsonify({"logs": [], "error": str(e)})
+        return jsonify({"logs": [], "error": "Failed to read logs"})
 
 def stream_logs():
     """Generator function for streaming logs via SSE"""
@@ -166,7 +166,7 @@ def thumbnails():
         return jsonify({"images": urls})
     except Exception as e:
         app.logger.error(f"Error getting thumbnails: {e}")
-        return jsonify({"images": [], "error": str(e)})
+        return jsonify({"images": [], "error": "Failed to get thumbnails"})
 
 @app.route("/frames/<filename>")
 def frame_file(filename):
@@ -179,7 +179,7 @@ def frame_file(filename):
         return send_from_directory(frames_path, filename)
     except Exception as e:
         app.logger.error(f"Error serving frame: {e}")
-        return str(e), 500
+        return "Frame not found", 404
 
 @app.route("/video")
 def video():
@@ -197,7 +197,7 @@ def video():
         return jsonify({"video": f"/video_file/{videos[-1]}"})
     except Exception as e:
         app.logger.error(f"Error getting video: {e}")
-        return jsonify({"video": None, "error": str(e)})
+        return jsonify({"video": None, "error": "Failed to get video"})
 
 @app.route("/video_file/<filename>")
 def video_file(filename):
@@ -210,7 +210,7 @@ def video_file(filename):
         return send_from_directory(video_path, filename, as_attachment=False)
     except Exception as e:
         app.logger.error(f"Error serving video: {e}")
-        return str(e), 500
+        return "Video not found", 404
 
 @app.route("/download_video/<filename>")
 def download_video(filename):
@@ -223,8 +223,12 @@ def download_video(filename):
         return send_from_directory(video_path, filename, as_attachment=True)
     except Exception as e:
         app.logger.error(f"Error downloading video: {e}")
-        return str(e), 500
+        return "Video not found", 404
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    import os
+    # Use debug mode only in development, controlled by environment variable
+    debug_mode = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+    app.run(host="0.0.0.0", port=5000, debug=debug_mode)
+
 
