@@ -1,234 +1,359 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory, Response
-import subprocess, os, json, signal, time, threading
+# ...existing code...
+import os
+import json
+import time
+import signal
+import threading
+import subprocess
 from datetime import datetime
+from queue import Queue, Empty
+
+from flask import Flask, render_template, request, jsonify, Response, send_from_directory
 
 app = Flask(__name__)
 
-# Configuration - Use local paths for development/testing
+# Configuration
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATUS_FILE = os.path.join(BASE_DIR, "timelapse_status.json")
-TIMELAPSE_SCRIPT = os.path.join(BASE_DIR, "timelapse.sh")
+# Production script path (Raspberry Pi)
+TIMELAPSE_SCRIPT = "/usr/local/bin/timelapse.sh"
+# For local development uncomment the following if you have a local script
+# TIMELAPSE_SCRIPT = os.path.join(BASE_DIR, "timelapse.sh")
 
-# For production on Raspberry Pi, uncomment these:
-# STATUS_FILE = "/mnt/share/timelapse_status.json"
-# TIMELAPSE_SCRIPT = "/usr/local/bin/timelapse.sh"
+# Globals
+process = None
+process_lock = threading.Lock()
+log_clients = []       # list of Queue objects for log SSE clients
+status_clients = []    # list of Queue objects for status SSE clients
+clients_lock = threading.Lock()
+recent_logs = []       # in-memory recent log lines
+MAX_RECENT_LOGS = 200
 
-process = None  # track the running timelapse
-log_position = {}  # track log file positions for streaming
+# Utilities
+def safe_write_json(path, data):
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        # best-effort: try writing directly
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
 
 def read_status():
-    """Read the current status from the JSON file"""
-    try:
-        if os.path.exists(STATUS_FILE):
-            with open(STATUS_FILE) as f:
+    if os.path.exists(STATUS_FILE):
+        try:
+            with open(STATUS_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-    except Exception as e:
-        app.logger.error(f"Error reading status: {e}")
-    return {"status": "idle", "captured": 0, "total": 0, "error": None}
+        except Exception:
+            pass
+    # default status
+    return {"status": "idle", "captured": 0, "total": 0, "error": None, "recent_logs": []}
 
-def find_latest_folder():
-    """Find the most recent timelapse folder"""
-    base = os.path.dirname(STATUS_FILE)
+def write_status(data):
+    # keep recent logs in file too
+    data = dict(data)
+    data.setdefault("recent_logs", recent_logs[-MAX_RECENT_LOGS:])
+    safe_write_json(STATUS_FILE, data)
+    # broadcast to status clients
+    broadcast_status(data)
+
+def broadcast_log(line):
+    payload = {"log": line}
+    with clients_lock:
+        for q in list(log_clients):
+            try:
+                q.put_nowait(payload)
+            except Exception:
+                # if a client queue is stuck, ignore it (it will be removed on disconnect)
+                pass
+
+def broadcast_status(status_data):
+    with clients_lock:
+        for q in list(status_clients):
+            try:
+                q.put_nowait(status_data)
+            except Exception:
+                pass
+
+def append_log(line):
+    recent_logs.append(line)
+    if len(recent_logs) > MAX_RECENT_LOGS:
+        del recent_logs[:-MAX_RECENT_LOGS]
+    # update status file small interval
+    curr = read_status()
+    curr["recent_logs"] = recent_logs[-MAX_RECENT_LOGS:]
+    safe_write_json(STATUS_FILE, curr)
+
+# Timelapse runner thread
+def run_timelapse_process(interval, frames):
+    global process
+    start_ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    run_meta = {
+        "start_time": start_ts,
+        "status": "running",
+        "captured": 0,
+        "total": frames,
+        "error": None,
+        "recent_logs": recent_logs[-MAX_RECENT_LOGS:]
+    }
+    write_status(run_meta)
+
     try:
-        folders = [os.path.join(base, d) for d in os.listdir(base) 
-                   if os.path.isdir(os.path.join(base, d)) and d.startswith("timelapse_")]
-        if not folders:
-            return None
-        return max(folders, key=os.path.getmtime)
-    except Exception as e:
-        app.logger.error(f"Error finding folder: {e}")
-        return None
+        with process_lock:
+            # Launch subprocess; merge stderr into stdout so we capture both
+            process = subprocess.Popen(
+                [TIMELAPSE_SCRIPT, str(interval), str(frames)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=1,
+                universal_newlines=True,
+                close_fds=True
+            )
 
+        # Read stdout/stderr live
+        if process.stdout is not None:
+            for raw_line in iter(process.stdout.readline, ""):
+                line = raw_line.rstrip("\n")
+                if line:
+                    # Update in-memory/log file and broadcast
+                    timestamped = f"{datetime.utcnow().isoformat()} - {line}"
+                    append_log(timestamped)
+                    broadcast_log(timestamped)
+
+                    # detect simple progress info if the script emits something like "captured: X"
+                    try:
+                        if "captured" in line and ":" in line:
+                            # naive parse e.g. "captured: 12"
+                            parts = line.split(":")
+                            key = parts[0].strip().lower()
+                            val = int(parts[1].strip())
+                            if key == "captured":
+                                curr = read_status()
+                                curr.update({"status": "running", "captured": val, "total": frames, "error": None})
+                                write_status(curr)
+                    except Exception:
+                        pass
+
+        # Wait for process to terminate
+        ret = process.wait()
+        end_status = "done" if ret == 0 else "error"
+        curr = read_status()
+        curr["status"] = end_status
+        curr["captured"] = curr.get("captured", frames)
+        curr["total"] = frames
+        if ret != 0:
+            curr["error"] = f"timelapse script exited with code {ret}"
+        write_status(curr)
+
+    except Exception as exc:
+        curr = read_status()
+        curr["status"] = "error"
+        curr["error"] = str(exc)
+        write_status(curr)
+        broadcast_log(f"ERROR: {exc}")
+    finally:
+        with process_lock:
+            process = None
+
+# Flask endpoints
 @app.route("/")
 def index():
     return render_template("index.html", status=read_status())
 
 @app.route("/start", methods=["POST"])
 def start_timelapse():
-    """Start a new timelapse capture"""
     global process
-    try:
-        data = request.get_json() if request.is_json else request.form
-        interval = data.get("interval", "5")
-        frames = data.get("frames", "10")
-        
-        # Validate inputs
-        try:
-            interval_int = int(interval)
-            frames_int = int(frames)
-            if interval_int < 1 or frames_int < 1:
-                return jsonify({"success": False, "message": "Interval and frames must be positive"}), 400
-        except ValueError:
-            return jsonify({"success": False, "message": "Invalid interval or frames value"}), 400
-        
-        if process and process.poll() is None:
-            return jsonify({"success": False, "message": "Timelapse already running"}), 400
-        
-        if not os.path.exists(TIMELAPSE_SCRIPT):
-            return jsonify({"success": False, "message": "Timelapse script not found"}), 500
+    data = request.get_json() if request.is_json else request.form
+    interval = data.get("interval", "5")
+    frames = data.get("frames", "10")
 
-        process = subprocess.Popen([TIMELAPSE_SCRIPT, str(interval_int), str(frames_int)],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        app.logger.info(f"Started timelapse: {frames_int} frames at {interval_int}s interval")
-        return jsonify({"success": True, "message": "Timelapse started"})
-    except Exception as e:
-        app.logger.error(f"Error starting timelapse: {e}")
-        return jsonify({"success": False, "message": "Failed to start timelapse"}), 500
+    try:
+        interval_i = int(interval)
+        frames_i = int(frames)
+        if interval_i < 1 or frames_i < 1:
+            return jsonify({"success": False, "message": "Interval and frames must be >= 1"}), 400
+    except ValueError:
+        return jsonify({"success": False, "message": "Invalid numeric values"}), 400
+
+    if not os.path.exists(TIMELAPSE_SCRIPT) or not os.access(TIMELAPSE_SCRIPT, os.X_OK):
+        return jsonify({"success": False, "message": f"Timelapse script not found or not executable: {TIMELAPSE_SCRIPT}"}), 500
+
+    with process_lock:
+        if process is not None and process.poll() is None:
+            return jsonify({"success": False, "message": "Timelapse already running"}), 400
+
+        # reset recent logs for this run
+        recent_logs.clear()
+        # start thread to run the process
+        thread = threading.Thread(target=run_timelapse_process, args=(interval_i, frames_i), daemon=True)
+        thread.start()
+
+    return jsonify({"success": True, "message": "Timelapse started"})
 
 @app.route("/stop", methods=["POST"])
 def stop_timelapse():
-    """Stop the running timelapse"""
-    global process
-    try:
-        if process and process.poll() is None:
+    with process_lock:
+        if process is None or process.poll() is not None:
+            return jsonify({"success": False, "message": "No timelapse running"}), 400
+        try:
+            # try graceful interrupt first
             process.send_signal(signal.SIGINT)
-            app.logger.info("Stopped timelapse")
-            return jsonify({"success": True, "message": "Timelapse stopped"})
-        return jsonify({"success": False, "message": "No timelapse running"}), 400
-    except Exception as e:
-        app.logger.error(f"Error stopping timelapse: {e}")
-        return jsonify({"success": False, "message": "Failed to stop timelapse"}), 500
+            # update status immediately
+            curr = read_status()
+            curr["status"] = "idle"
+            write_status(curr)
+            return jsonify({"success": True, "message": "Stop signal sent"})
+        except Exception as exc:
+            return jsonify({"success": False, "message": f"Failed to stop: {exc}"}), 500
 
 @app.route("/status")
-def status():
+def get_status():
     return jsonify(read_status())
 
-@app.route("/logs")
-def logs():
-    """Get the latest log entries"""
-    try:
-        folder = find_latest_folder()
-        if not folder:
-            return jsonify({"logs": []})
-        log_file = os.path.join(folder, "timelapse.log")
-        if not os.path.exists(log_file):
-            return jsonify({"logs": []})
-        with open(log_file) as f:
-            lines = f.readlines()
-        return jsonify({"logs": lines[-50:]})  # last 50 lines
-    except Exception as e:
-        app.logger.error(f"Error reading logs: {e}")
-        return jsonify({"logs": [], "error": "Failed to read logs"})
-
-def stream_logs():
-    """Generator function for streaming logs via SSE"""
-    client_id = id(threading.current_thread())
-    log_position[client_id] = 0
-    
-    try:
-        while True:
-            folder = find_latest_folder()
-            if folder:
-                log_file = os.path.join(folder, "timelapse.log")
-                if os.path.exists(log_file):
-                    with open(log_file) as f:
-                        f.seek(log_position.get(client_id, 0))
-                        new_lines = f.readlines()
-                        log_position[client_id] = f.tell()
-                        
-                        if new_lines:
-                            for line in new_lines:
-                                yield f"data: {json.dumps({'log': line.strip()})}\n\n"
-            
-            time.sleep(1)
-    except GeneratorExit:
-        log_position.pop(client_id, None)
+# SSE log streaming
+def sse_format_event(data):
+    # data is a dict; encode as JSON string on client side or embed
+    payload = json.dumps(data, ensure_ascii=False)
+    return f"data: {payload}\n\n"
 
 @app.route("/stream/logs")
-def stream_logs_endpoint():
-    """SSE endpoint for streaming logs"""
-    return Response(stream_logs(), mimetype="text/event-stream")
+def stream_logs():
+    q = Queue()
+    with clients_lock:
+        log_clients.append(q)
 
-def stream_status():
-    """Generator function for streaming status updates via SSE"""
-    while True:
-        status = read_status()
-        yield f"data: {json.dumps(status)}\n\n"
-        time.sleep(1)
+    def generator():
+        try:
+            # send last N logs initially
+            for line in recent_logs[-50:]:
+                yield sse_format_event({"log": line})
+            # then stream new lines
+            while True:
+                try:
+                    item = q.get(timeout=15)
+                    yield sse_format_event(item)
+                except Empty:
+                    # keepalive comment to prevent proxies/timeouts
+                    yield ": keep-alive\n\n"
+        except GeneratorExit:
+            # client disconnected
+            pass
+        finally:
+            with clients_lock:
+                try:
+                    log_clients.remove(q)
+                except ValueError:
+                    pass
 
+    return Response(generator(), mimetype="text/event-stream")
+
+# SSE status streaming
 @app.route("/stream/status")
-def stream_status_endpoint():
-    """SSE endpoint for streaming status updates"""
-    return Response(stream_status(), mimetype="text/event-stream")
+def stream_status():
+    q = Queue()
+    with clients_lock:
+        status_clients.append(q)
+
+    def generator():
+        try:
+            # send immediate status snapshot
+            yield sse_format_event(read_status())
+            while True:
+                try:
+                    item = q.get(timeout=10)
+                    yield sse_format_event(item)
+                except Empty:
+                    # periodically re-send current status to ensure clients stay in sync
+                    yield sse_format_event(read_status())
+                    time.sleep(0.5)
+        except GeneratorExit:
+            pass
+        finally:
+            with clients_lock:
+                try:
+                    status_clients.remove(q)
+                except ValueError:
+                    pass
+
+    return Response(generator(), mimetype="text/event-stream")
+
+# Thumbnails, frames, video endpoints rely on folder structure created by your script.
+def find_latest_folder():
+    # look for folders in BASE_DIR that start with "timelapse_" (script expected to create these)
+    try:
+        folders = [
+            os.path.join(BASE_DIR, d)
+            for d in os.listdir(BASE_DIR)
+            if os.path.isdir(os.path.join(BASE_DIR, d)) and d.startswith("timelapse_")
+        ]
+        if not folders:
+            return None
+        return max(folders, key=os.path.getmtime)
+    except Exception:
+        return None
 
 @app.route("/thumbnails")
 def thumbnails():
-    """Get list of captured thumbnail images"""
-    try:
-        folder = find_latest_folder()
-        if not folder:
-            return jsonify({"images": []})
-        video_frames = os.path.join(folder, "video_frames")
-        if not os.path.exists(video_frames):
-            return jsonify({"images": []})
-        files = sorted(os.listdir(video_frames))[-50:]  # last 50 images
-        urls = [f"/frames/{file}" for file in files if file.endswith(('.jpg', '.jpeg', '.png'))]
-        return jsonify({"images": urls})
-    except Exception as e:
-        app.logger.error(f"Error getting thumbnails: {e}")
-        return jsonify({"images": [], "error": "Failed to get thumbnails"})
+    folder = find_latest_folder()
+    if not folder:
+        return jsonify({"images": []})
+    frames_dir = os.path.join(folder, "video_frames")
+    if not os.path.exists(frames_dir):
+        return jsonify({"images": []})
+    files = sorted([f for f in os.listdir(frames_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))])[-50:]
+    urls = [f"/frames/{f}" for f in files]
+    return jsonify({"images": urls})
 
-@app.route("/frames/<filename>")
+@app.route("/frames/<path:filename>")
 def frame_file(filename):
-    """Serve individual frame image files"""
-    try:
-        folder = find_latest_folder()
-        if not folder:
-            return "Folder not found", 404
-        frames_path = os.path.join(folder, "video_frames")
-        return send_from_directory(frames_path, filename)
-    except Exception as e:
-        app.logger.error(f"Error serving frame: {e}")
-        return "Frame not found", 404
+    folder = find_latest_folder()
+    if not folder:
+        return "Folder not found", 404
+    frames_dir = os.path.join(folder, "video_frames")
+    if not os.path.exists(frames_dir):
+        return "Frame folder not found", 404
+    return send_from_directory(frames_dir, filename)
 
 @app.route("/video")
-def video():
-    """Get information about the rendered video"""
-    try:
-        folder = find_latest_folder()
-        if not folder:
-            return jsonify({"video": None})
-        video_dir = os.path.join(folder, "video")
-        if not os.path.exists(video_dir):
-            return jsonify({"video": None})
-        videos = sorted(os.listdir(video_dir))
-        if not videos:
-            return jsonify({"video": None})
-        return jsonify({"video": f"/video_file/{videos[-1]}"})
-    except Exception as e:
-        app.logger.error(f"Error getting video: {e}")
-        return jsonify({"video": None, "error": "Failed to get video"})
+def video_info():
+    folder = find_latest_folder()
+    if not folder:
+        return jsonify({"video": None})
+    video_dir = os.path.join(folder, "video")
+    if not os.path.exists(video_dir):
+        return jsonify({"video": None})
+    videos = sorted(os.listdir(video_dir))
+    if not videos:
+        return jsonify({"video": None})
+    return jsonify({"video": f"/video_file/{videos[-1]}"})
 
-@app.route("/video_file/<filename>")
+@app.route("/video_file/<path:filename>")
 def video_file(filename):
-    """Download/stream the video file"""
-    try:
-        folder = find_latest_folder()
-        if not folder:
-            return "Folder not found", 404
-        video_path = os.path.join(folder, "video")
-        return send_from_directory(video_path, filename, as_attachment=False)
-    except Exception as e:
-        app.logger.error(f"Error serving video: {e}")
-        return "Video not found", 404
+    folder = find_latest_folder()
+    if not folder:
+        return "Folder not found", 404
+    video_dir = os.path.join(folder, "video")
+    if not os.path.exists(video_dir):
+        return "Video folder not found", 404
+    return send_from_directory(video_dir, filename, as_attachment=False)
 
-@app.route("/download_video/<filename>")
+@app.route("/download_video/<path:filename>")
 def download_video(filename):
-    """Force download of the video file"""
-    try:
-        folder = find_latest_folder()
-        if not folder:
-            return "Folder not found", 404
-        video_path = os.path.join(folder, "video")
-        return send_from_directory(video_path, filename, as_attachment=True)
-    except Exception as e:
-        app.logger.error(f"Error downloading video: {e}")
-        return "Video not found", 404
+    folder = find_latest_folder()
+    if not folder:
+        return "Folder not found", 404
+    video_dir = os.path.join(folder, "video")
+    if not os.path.exists(video_dir):
+        return "Video folder not found", 404
+    return send_from_directory(video_dir, filename, as_attachment=True)
 
+# Ensure status file exists on startup
 if __name__ == "__main__":
-    import os
-    # Use debug mode only in development, controlled by environment variable
-    debug_mode = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
-    app.run(host="0.0.0.0", port=5000, debug=debug_mode)
-
-
+    # write initial status if missing
+    if not os.path.exists(STATUS_FILE):
+        write_status(read_status())
+    debug_mode = os.environ.get("FLASK_DEBUG", "False").lower() == "true"
+    app.run(host="0.0.0.0", port=5000, debug=debug_mode, threaded=True)
+# ...existing code...
