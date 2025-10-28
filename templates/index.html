@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Timelapse Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1>Timelapse Dashboard</h1>
+
+    <div>
+        <label>Interval (s):</label>
+        <input type="number" id="interval" value="5">
+        <label>Frames:</label>
+        <input type="number" id="frames" value="10">
+        <button onclick="startTimelapse()">Start</button>
+        <button onclick="stopTimelapse()">Stop</button>
+    </div>
+
+    <h2>Status: <span id="status">idle</span></h2>
+    <h3>Progress: <span id="progress">0/0</span></h3>
+
+    <h2>Logs</h2>
+    <pre id="logs" style="height:200px; overflow:auto; background:#eee; padding:5px;"></pre>
+
+    <h2>Thumbnails</h2>
+    <div id="images" style="display:flex; flex-wrap: wrap;"></div>
+
+    <h2>Video</h2>
+    <video id="videoPlayer" controls style="max-width:500px;"></video>
+
+<script>
+async function startTimelapse() {
+    const interval = document.getElementById("interval").value;
+    const frames = document.getElementById("frames").value;
+    await fetch("/start", {method:"POST", body:new URLSearchParams({interval, frames})});
+}
+
+async function stopTimelapse() {
+    await fetch("/stop", {method:"POST"});
+}
+
+async function update() {
+    const statusRes = await fetch("/status");
+    const status = await statusRes.json();
+    document.getElementById("status").innerText = status.status;
+    document.getElementById("progress").innerText = `${status.captured}/${status.total}`;
+
+    const logsRes = await fetch("/logs");
+    const logs = await logsRes.json();
+    document.getElementById("logs").innerText = logs.logs.join("");
+
+    const thumbsRes = await fetch("/thumbnails");
+    const thumbs = await thumbsRes.json();
+    const imagesDiv = document.getElementById("images");
+    imagesDiv.innerHTML = "";
+    thumbs.images.forEach(url => {
+        const img = document.createElement("img");
+        img.src = url;
+        img.style.width = "80px";
+        img.style.margin = "2px";
+        imagesDiv.appendChild(img);
+    });
+
+    const videoRes = await fetch("/video");
+    const video = await videoRes.json();
+    const player = document.getElementById("videoPlayer");
+    if(video.video) player.src = video.video;
+}
+
+setInterval(update, 1000);
+</script>
+</body>
+</html>
+
