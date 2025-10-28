@@ -105,7 +105,7 @@ def run_timelapse_process(interval, frames):
     }
     write_status(run_meta)
 
-    cmd = f"source {BASE_DIR}/venv/bin/activate && {TIMELAPSE_SCRIPT} {interval} {frames}"
+    cmd = f". {BASE_DIR}/venv/bin/activate && {TIMELAPSE_SCRIPT} {interval} {frames}"
 
     try:
         with process_lock:
@@ -116,7 +116,8 @@ def run_timelapse_process(interval, frames):
                 bufsize=1,
                 shell=True,
                 universal_newlines=True,
-                cwd=run_folder
+                cwd=run_folder,
+                executable="/bin/bash"
             )
 
         if process.stdout:
