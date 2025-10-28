@@ -1,74 +1,192 @@
 <!DOCTYPE html>
-<html>
+<html lang="en" data-bs-theme="light">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Timelapse Dashboard</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <h1>Timelapse Dashboard</h1>
+    <nav class="navbar navbar-dark bg-primary mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">
+                <i class="bi bi-camera-video"></i> Timelapse Dashboard
+            </span>
+            <div class="d-flex align-items-center">
+                <span class="text-white me-3" id="connection-status">
+                    <i class="bi bi-circle-fill text-success"></i> Connected
+                </span>
+                <button class="btn btn-outline-light" id="theme-toggle" onclick="toggleTheme()">
+                    <i class="bi bi-moon-stars"></i>
+                </button>
+            </div>
+        </div>
+    </nav>
 
-    <div>
-        <label>Interval (s):</label>
-        <input type="number" id="interval" value="5">
-        <label>Frames:</label>
-        <input type="number" id="frames" value="10">
-        <button onclick="startTimelapse()">Start</button>
-        <button onclick="stopTimelapse()">Stop</button>
+    <div class="container-fluid">
+        <!-- Alert Messages -->
+        <div id="alert-container"></div>
+
+        <!-- Dashboard Overview -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card text-center dashboard-card">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-2 text-muted">Status</h6>
+                        <h3 class="card-title mb-0">
+                            <span id="status-badge" class="badge bg-secondary">idle</span>
+                        </h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center dashboard-card">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-2 text-muted">Frames Captured</h6>
+                        <h3 class="card-title mb-0" id="captured-count">0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center dashboard-card">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-2 text-muted">Total Frames</h6>
+                        <h3 class="card-title mb-0" id="total-count">0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center dashboard-card">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-2 text-muted">Progress</h6>
+                        <div class="progress mt-2" style="height: 30px;">
+                            <div id="progress-bar" class="progress-bar" role="progressbar" style="width: 0%">0%</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="row mb-4">
+            <div class="col-lg-6">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="bi bi-sliders"></i> Control Panel</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="timelapse-form" onsubmit="startTimelapse(event)">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label for="interval" class="form-label">Interval (seconds)</label>
+                                    <input type="number" class="form-control" id="interval" name="interval" 
+                                           value="5" min="1" max="3600" required>
+                                    <div class="form-text">Time between captures</div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="frames" class="form-label">Number of Frames</label>
+                                    <input type="number" class="form-control" id="frames" name="frames" 
+                                           value="10" min="1" max="10000" required>
+                                    <div class="form-text">Total frames to capture</div>
+                                </div>
+                            </div>
+                            <div class="d-grid gap-2 d-md-flex">
+                                <button type="submit" class="btn btn-success btn-lg" id="start-btn">
+                                    <i class="bi bi-play-circle"></i> Start Timelapse
+                                </button>
+                                <button type="button" class="btn btn-danger btn-lg" id="stop-btn" 
+                                        onclick="stopTimelapse()" disabled>
+                                    <i class="bi bi-stop-circle"></i> Stop Timelapse
+                                </button>
+                            </div>
+                        </form>
+                        <div class="mt-3">
+                            <small class="text-muted">
+                                <i class="bi bi-info-circle"></i> 
+                                Estimated duration: <span id="estimated-duration">50 seconds</span>
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Video Download -->
+            <div class="col-lg-6">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="bi bi-film"></i> Video Output</h5>
+                    </div>
+                    <div class="card-body text-center">
+                        <div id="video-section">
+                            <div id="no-video-msg">
+                                <i class="bi bi-camera-video-off" style="font-size: 3rem; opacity: 0.3;"></i>
+                                <p class="text-muted mt-2">No video available yet</p>
+                                <small class="text-muted">Video will appear here after rendering completes</small>
+                            </div>
+                            <div id="video-ready" style="display: none;">
+                                <video id="videoPlayer" controls class="w-100 mb-3" style="max-height: 300px;"></video>
+                                <button class="btn btn-success btn-lg" id="download-btn" onclick="downloadVideo()">
+                                    <i class="bi bi-download"></i> Download Video
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabs for Logs and Gallery -->
+        <div class="row">
+            <div class="col-12">
+                <ul class="nav nav-tabs" id="myTab" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="logs-tab" data-bs-toggle="tab" 
+                                data-bs-target="#logs-pane" type="button" role="tab">
+                            <i class="bi bi-terminal"></i> Live Logs
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="gallery-tab" data-bs-toggle="tab" 
+                                data-bs-target="#gallery-pane" type="button" role="tab">
+                            <i class="bi bi-images"></i> Image Gallery <span id="image-count" class="badge bg-primary">0</span>
+                        </button>
+                    </li>
+                </ul>
+                <div class="tab-content border border-top-0 p-3" id="myTabContent">
+                    <div class="tab-pane fade show active" id="logs-pane" role="tabpanel">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0">Timelapse Logs</h6>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="clearLogs()">
+                                <i class="bi bi-trash"></i> Clear
+                            </button>
+                        </div>
+                        <pre id="logs" class="log-viewer"></pre>
+                    </div>
+                    <div class="tab-pane fade" id="gallery-pane" role="tabpanel">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h6 class="mb-0">Captured Images</h6>
+                            <button class="btn btn-sm btn-outline-primary" onclick="refreshGallery()">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                        </div>
+                        <div id="images" class="image-gallery"></div>
+                        <div id="no-images-msg" class="text-center py-5" style="display: none;">
+                            <i class="bi bi-image" style="font-size: 3rem; opacity: 0.3;"></i>
+                            <p class="text-muted mt-2">No images captured yet</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <h2>Status: <span id="status">idle</span></h2>
-    <h3>Progress: <span id="progress">0/0</span></h3>
-
-    <h2>Logs</h2>
-    <pre id="logs" style="height:200px; overflow:auto; background:#eee; padding:5px;"></pre>
-
-    <h2>Thumbnails</h2>
-    <div id="images" style="display:flex; flex-wrap: wrap;"></div>
-
-    <h2>Video</h2>
-    <video id="videoPlayer" controls style="max-width:500px;"></video>
-
-<script>
-async function startTimelapse() {
-    const interval = document.getElementById("interval").value;
-    const frames = document.getElementById("frames").value;
-    await fetch("/start", {method:"POST", body:new URLSearchParams({interval, frames})});
-}
-
-async function stopTimelapse() {
-    await fetch("/stop", {method:"POST"});
-}
-
-async function update() {
-    const statusRes = await fetch("/status");
-    const status = await statusRes.json();
-    document.getElementById("status").innerText = status.status;
-    document.getElementById("progress").innerText = `${status.captured}/${status.total}`;
-
-    const logsRes = await fetch("/logs");
-    const logs = await logsRes.json();
-    document.getElementById("logs").innerText = logs.logs.join("");
-
-    const thumbsRes = await fetch("/thumbnails");
-    const thumbs = await thumbsRes.json();
-    const imagesDiv = document.getElementById("images");
-    imagesDiv.innerHTML = "";
-    thumbs.images.forEach(url => {
-        const img = document.createElement("img");
-        img.src = url;
-        img.style.width = "80px";
-        img.style.margin = "2px";
-        imagesDiv.appendChild(img);
-    });
-
-    const videoRes = await fetch("/video");
-    const video = await videoRes.json();
-    const player = document.getElementById("videoPlayer");
-    if(video.video) player.src = video.video;
-}
-
-setInterval(update, 1000);
-</script>
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/script.js"></script>
 </body>
 </html>
 

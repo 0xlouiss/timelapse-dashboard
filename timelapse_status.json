@@ -1,6 +1,8 @@
 {
-    "status": "idle",
-    "captured": 0,
-    "total": 0
+    "status": "done",
+    "captured": 3,
+    "total": 3,
+    "folder": "/home/runner/work/timelapse-dashboard/timelapse-dashboard/timelapse_20251028_105011",
+    "video": "/home/runner/work/timelapse-dashboard/timelapse-dashboard/timelapse_20251028_105011/video/timelapse_20251028_105011.mp4",
+    "error": null
 }
-

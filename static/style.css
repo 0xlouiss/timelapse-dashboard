@@ -1,5 +1,215 @@
-body { font-family: sans-serif; margin: 20px; }
-h1 { color: #333; }
-input { margin: 0 5px; width: 60px; }
-button { margin-left: 10px; }
+/* Custom styles for timelapse dashboard */
+
+body {
+    min-height: 100vh;
+    background-color: var(--bs-body-bg);
+    transition: background-color 0.3s ease;
+}
+
+/* Dashboard cards */
+.dashboard-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.dashboard-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+/* Log viewer */
+.log-viewer {
+    height: 400px;
+    overflow-y: auto;
+    background-color: var(--bs-secondary-bg);
+    color: var(--bs-body-color);
+    padding: 15px;
+    border-radius: 5px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+[data-bs-theme="dark"] .log-viewer {
+    background-color: #1a1d20;
+    border: 1px solid #404040;
+}
+
+/* Image gallery */
+.image-gallery {
+    min-height: 200px;
+}
+
+.gallery-image {
+    width: 100%;
+    height: 150px;
+    object-fit: cover;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.gallery-image:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+/* Progress bar animations */
+.progress-bar {
+    transition: width 0.5s ease;
+}
+
+/* Card animations */
+.card {
+    transition: box-shadow 0.3s ease;
+}
+
+.card:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+/* Button styles */
+.btn-lg {
+    padding: 0.75rem 1.5rem;
+    font-size: 1.1rem;
+}
+
+/* Status badge pulse animation */
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(13, 110, 253, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(13, 110, 253, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(13, 110, 253, 0);
+    }
+}
+
+.badge.bg-primary {
+    animation: pulse 2s infinite;
+}
+
+/* Dark mode specific styles */
+[data-bs-theme="dark"] {
+    --bs-body-bg: #212529;
+    --bs-body-color: #dee2e6;
+}
+
+[data-bs-theme="dark"] .card {
+    background-color: #2d3338;
+    border-color: #404040;
+}
+
+[data-bs-theme="dark"] .card-header {
+    border-bottom-color: #404040;
+}
+
+[data-bs-theme="dark"] .nav-tabs {
+    border-bottom-color: #404040;
+}
+
+[data-bs-theme="dark"] .nav-tabs .nav-link {
+    color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .nav-tabs .nav-link.active {
+    background-color: #2d3338;
+    border-color: #404040 #404040 #2d3338;
+    color: #fff;
+}
+
+/* Video player */
+video {
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+/* Connection status indicator */
+#connection-status i {
+    font-size: 0.7rem;
+    vertical-align: middle;
+}
+
+/* Form inputs */
+.form-control:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .dashboard-card .card-body {
+        padding: 0.75rem;
+    }
+    
+    .dashboard-card h3 {
+        font-size: 1.5rem;
+    }
+    
+    .log-viewer {
+        height: 300px;
+        font-size: 0.75rem;
+    }
+    
+    .gallery-image {
+        height: 100px;
+    }
+}
+
+/* Smooth transitions */
+* {
+    transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Alert animations */
+.alert {
+    animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateY(-20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* Loading spinner */
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+    border-width: 0.15em;
+}
+
+/* Custom scrollbar */
+.log-viewer::-webkit-scrollbar {
+    width: 8px;
+}
+
+.log-viewer::-webkit-scrollbar-track {
+    background: var(--bs-secondary-bg);
+}
+
+.log-viewer::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
+.log-viewer::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* Tab content */
+.tab-content {
+    min-height: 500px;
+}
+
+/* Empty state icons */
+.text-muted i {
+    opacity: 0.5;
+}
 
