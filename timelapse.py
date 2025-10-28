@@ -87,18 +87,76 @@ def append_log(line):
     safe_write_json(STATUS_FILE, curr)
 
 # Timelapse runner thread
+# Timelapse runner thread (updated to activate venv and use /mnt/share)
 def run_timelapse_process(interval, frames):
     global process
     start_ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    run_folder = os.path.join("/mnt/share", f"timelapse_{start_ts}")
+    os.makedirs(run_folder, exist_ok=True)
+
     run_meta = {
         "start_time": start_ts,
         "status": "running",
         "captured": 0,
         "total": frames,
+        "folder": run_folder,
         "error": None,
         "recent_logs": recent_logs[-MAX_RECENT_LOGS:]
     }
     write_status(run_meta)
+
+    cmd = f"source {BASE_DIR}/venv/bin/activate && {TIMELAPSE_SCRIPT} {interval} {frames}"
+
+    try:
+        with process_lock:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=1,
+                shell=True,
+                universal_newlines=True,
+                cwd=run_folder
+            )
+
+        if process.stdout:
+            for raw_line in iter(process.stdout.readline, ""):
+                line = raw_line.rstrip("\n")
+                if line:
+                    timestamped = f"{datetime.utcnow().isoformat()} - {line}"
+                    append_log(timestamped)
+                    broadcast_log(timestamped)
+
+                    try:
+                        if "captured" in line and ":" in line:
+                            val = int(line.split(":")[1].strip())
+                            curr = read_status()
+                            curr.update({"captured": val, "status": "running"})
+                            write_status(curr)
+                    except Exception:
+                        pass
+
+        ret = process.wait()
+        curr = read_status()
+        curr["status"] = "done" if ret == 0 else "error"
+        curr["captured"] = curr.get("captured", frames)
+        curr["total"] = frames
+        if ret != 0:
+            curr["error"] = f"Timelapse script exited with code {ret}"
+        write_status(curr)
+
+    except Exception as exc:
+        curr = read_status()
+        curr["status"] = "error"
+        curr["error"] = str(exc)
+        write_status(curr)
+        broadcast_log(f"ERROR: {exc}")
+
+    finally:
+        with process_lock:
+            process = None
+
+
 
     try:
         with process_lock:
