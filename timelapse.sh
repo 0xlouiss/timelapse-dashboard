@@ -5,7 +5,17 @@
 
 INTERVAL=${1:-5}
 FRAMES=${2:-10}
-BASE_DIR="/mnt/share"
+
+# Use BASE_DIR environment variable or default to script directory
+if [ -z "$BASE_DIR" ]; then
+    # Use /mnt/share on Raspberry Pi if it exists, otherwise use script directory
+    if [ -d "/mnt/share" ] && [ -w "/mnt/share" ]; then
+        BASE_DIR="/mnt/share"
+    else
+        BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    fi
+fi
+
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OUTPUT_DIR="$BASE_DIR/timelapse_$TIMESTAMP"
 VIDEO_FRAMES_DIR="$OUTPUT_DIR/video_frames"
