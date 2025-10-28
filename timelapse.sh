@@ -44,7 +44,69 @@ EOF
 # Cleanup function
 cleanup() {
     echo "[$(date)] Received interrupt signal, cleaning up..." >> "$LOG_FILE"
-    cat > "$STATUS_FILE" <<EOF
+    
+    # Check if we have any frames captured
+    if [ $CAPTURED -gt 0 ]; then
+        echo "[$(date)] Creating video from $CAPTURED captured frames..." >> "$LOG_FILE"
+        
+        # Update status to rendering
+        cat > "$STATUS_FILE" <<EOF
+{
+    "status": "rendering",
+    "captured": $CAPTURED,
+    "total": $FRAMES,
+    "folder": "$OUTPUT_DIR",
+    "error": null
+}
+EOF
+        
+        # Create video using ffmpeg
+        VIDEO_FILE="$VIDEO_DIR/timelapse_$TIMESTAMP.mp4"
+        if command -v ffmpeg &> /dev/null; then
+            echo "[$(date)] Creating video with ffmpeg" >> "$LOG_FILE"
+            ffmpeg -framerate 30 -pattern_type glob -i "$VIDEO_FRAMES_DIR/*.jpg" \
+                -c:v libx264 -pix_fmt yuv420p -preset medium -crf 23 \
+                "$VIDEO_FILE" >> "$LOG_FILE" 2>&1
+            
+            if [ $? -eq 0 ]; then
+                echo "[$(date)] Video created successfully: $VIDEO_FILE" >> "$LOG_FILE"
+                cat > "$STATUS_FILE" <<EOF
+{
+    "status": "stopped",
+    "captured": $CAPTURED,
+    "total": $FRAMES,
+    "folder": "$OUTPUT_DIR",
+    "video": "$VIDEO_FILE",
+    "error": null
+}
+EOF
+            else
+                echo "[$(date)] Error creating video" >> "$LOG_FILE"
+                cat > "$STATUS_FILE" <<EOF
+{
+    "status": "stopped",
+    "captured": $CAPTURED,
+    "total": $FRAMES,
+    "folder": "$OUTPUT_DIR",
+    "error": "Failed to create video"
+}
+EOF
+            fi
+        else
+            echo "[$(date)] Warning: ffmpeg not found, skipping video creation" >> "$LOG_FILE"
+            cat > "$STATUS_FILE" <<EOF
+{
+    "status": "stopped",
+    "captured": $CAPTURED,
+    "total": $FRAMES,
+    "folder": "$OUTPUT_DIR",
+    "error": "ffmpeg not available"
+}
+EOF
+        fi
+    else
+        # No frames captured, just set stopped status
+        cat > "$STATUS_FILE" <<EOF
 {
     "status": "stopped",
     "captured": $CAPTURED,
@@ -53,6 +115,8 @@ cleanup() {
     "error": null
 }
 EOF
+    fi
+    
     exit 0
 }
 

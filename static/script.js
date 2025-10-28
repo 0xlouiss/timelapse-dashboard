@@ -102,7 +102,7 @@ function updateStatus(status) {
     }
     
     // Check for video availability
-    if (status.status === 'done' || status.status === 'error') {
+    if (status.status === 'done' || status.status === 'stopped' || status.status === 'error') {
         checkForVideo();
     }
 }
