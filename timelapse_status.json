@@ -1,8 +1,7 @@
 {
-    "status": "done",
-    "captured": 3,
-    "total": 3,
-    "folder": "/home/runner/work/timelapse-dashboard/timelapse-dashboard/timelapse_20251028_105011",
-    "video": "/home/runner/work/timelapse-dashboard/timelapse-dashboard/timelapse_20251028_105011/video/timelapse_20251028_105011.mp4",
+    "status": "rendering",
+    "captured": 5,
+    "total": 5,
+    "folder": "/home/runner/work/timelapse-dashboard/timelapse-dashboard/timelapse_20251028_113650",
     "error": null
 }
