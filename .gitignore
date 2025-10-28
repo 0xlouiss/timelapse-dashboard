@@ -43,3 +43,4 @@ Thumbs.db
 timelapse_*/
 *.log
 *.swp
+timelapse_status.json
